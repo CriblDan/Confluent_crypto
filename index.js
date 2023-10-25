@@ -11,7 +11,7 @@ const {Buffer} = require('buffer');
 
 let srcField = '_raw';
 let dstField;
-let keyField;// = '__headers["encryption/SymmetricKey/wrappingkey/dataencryptionkey"].data';
+let keyField;
 let decryptedData;
 let keyVaultKey;
 let CryptoClient;
@@ -47,12 +47,12 @@ exports.init = async (opts) => {
     AZURE_TENANT_ID,AZURE_CLIENT_ID,AZURE_CLIENT_SECRET
   );
 
-  const client = await getAzureClient();
-  cLogger.info('AzureClient', client)
-  keyVaultKey = await getAzureKey(client);
-  cLogger.info('keyVault', keyVaultKey)
-  CryptoClient = await azureCryptoClient(keyVaultKey);
-  cLogger.info('CryptoClient', CryptoClient)
+  // const client = await getAzureClient();
+  // cLogger.info('AzureClient', client)
+  // keyVaultKey = await getAzureKey(client);
+  // cLogger.info('keyVault', keyVaultKey)
+  // CryptoClient = await azureCryptoClient(keyVaultKey);
+  // cLogger.info('CryptoClient', CryptoClient)
 };
 
 function getAzureClient() {
@@ -70,7 +70,7 @@ async function getAzureKey(client) {
   })
  return await keyPromise;
 }
-  
+
 async function azureCryptoClient(keyVaultKey) {
   let encryptPromise = new Promise(function(resolve, reject) {
     let CryptoClient = new CryptographyClient(keyVaultKey, credential);
@@ -93,19 +93,19 @@ async function azureDecrypt(CryptoClient, encryptResult) {
     //let decryptResults = CryptoClient.decrypt(algorithm, encryptResult.result);
     let decryptResults = CryptoClient.decrypt(algorithm, encryptResult);
     resolve(decryptResults);
-  }); 
-  
+  });
+
   return await decryptPromise;
 }
 
 function setValue (value){
   cLogger.info('insideSetValue', value);
   decryptedData = value.toString('utf8');
-  cLogger.info(decryptedData);  
- 
+  cLogger.info(decryptedData);
+
 }
 
-exports.process = (event) => {
+exports.process = async (event) => {
   let eventKeyData;
   let decryptEventKeyResults;
   let encryptedSrcData;
@@ -113,29 +113,45 @@ exports.process = (event) => {
   let decryptEventDataResults;
   let decBuffer;
   let decString;
-  
 
+  cLogger.info(event)
+
+  try {
     // Decrypting the event Key using the key vault key
     // Get key from keyfield specified in GUI
+    const client = await getAzureClient();
+    cLogger.info('AzureClient', client)
+    keyVaultKey = await getAzureKey(client);
+    cLogger.info('keyVault', keyVaultKey)
+    CryptoClient = await azureCryptoClient(keyVaultKey);
+    cLogger.info('CryptoClient', CryptoClient)
     eventKeyData = keyField.get(event);
-    //Decrypt Eventkeydata field using the key vault key, 
-    cLogger.info('eventKeyData',eventKeyData);
-    decryptEventKeyResults = azureDecrypt(CryptoClient, eventKeyData);
-    cLogger.info(decryptEventKeyResults);
+  } catch (err){
+    cLogger.error('failed to get event Key: ' + err, err);
+  }
+  try {
+    //Decrypt Eventkeydata field using the key vault key,
 
-  
-    // //decrypt encrypted field using the event key
-    // //get encrypted data from srcField specified in GUI
-    encryptedSrcData = _raw.get(event);
-    // //Create new crypto client using the event key decrypted above
-    decryptEventClient = azureCryptoClient(decryptEventKeyResults);
-    // //Decrypt encrypted field using the event Key
-    decryptEventDataResults = azureDecrypt(decryptEventClient,encryptedSrcData)
-    
-    // // Add decrypted data to destField value
+    decryptEventKeyResults = await azureDecrypt(CryptoClient, eventKeyData);
+    cLogger.info('decrypted event key: ' + decryptEventKeyResults);
+  } catch (err){
+    cLogger.error('failed to decrypt event Key: ' + err, err);
+  }
+  try {
+    //decrypt encrypted field using the event key
+    //get encrypted data from srcField specified in GUI
+    encryptedSrcData = srcField.get(event);
+    //Create new crypto client using the event key decrypted above
+    decryptEventClient = await azureCryptoClient(decryptEventKeyResults);
+    //Decrypt encrypted field using the event Key
+    decryptEventDataResults = await azureDecrypt(decryptEventClient,encryptedSrcData)
+
+    // Add decrypted data to destField value
     decBuf = Buffer.from(decryptEventDataResults.result, 'base64')
     decString = decBuf.toString('utf8')
     dstField.set(event, decString)
- 
+  }catch (err){
+    cLogger.error('failed to decrypt encrypted field: ' + err, err);
+  }
   return event;
 };
